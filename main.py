@@ -1,3 +1,4 @@
+import os
 import requests
 import sqlite3
 import pandas as pd
@@ -5,7 +6,7 @@ import time
 
 # --- KONFIGURACJA ---
 APP_ID = "4487c86b"
-APP_KEY = "db8e480db084a147ea1a6c19e5cd9602"
+APP_KEY = os.getenv("ADZUNA_APP_KEY", "TWOJE_APP_KEY")  # Pobierz z zmiennej środowiskowej lub wpisz ręcznie
 DB_NAME = "study_and_work_roi.db"
 
 
