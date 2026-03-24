@@ -3,10 +3,13 @@ import requests
 import sqlite3
 import pandas as pd
 import time
+from dotenv import load_dotenv
+
+load_dotenv()  # Ładuje zmienne środowiskowe z pliku .env
 
 # --- KONFIGURACJA ---
-APP_ID = "4487c86b"
-APP_KEY = os.getenv("ADZUNA_APP_KEY", "TWOJE_APP_KEY")  # Pobierz z zmiennej środowiskowej lub wpisz ręcznie
+APP_ID = os.getenv("ADZUNA_APP_ID", "APP_ID")
+APP_KEY = os.getenv("ADZUNA_APP_KEY", "APP_KEY")
 DB_NAME = "study_and_work_roi.db"
 
 
@@ -117,7 +120,7 @@ def create_database(df_jobs, csv_path):
     conn.close()
 
 if __name__ == "__main__":
-    if APP_ID == "TWOJE_APP_ID":
+    if APP_ID == "APP_ID":
         print("BŁĄD: Zmień APP_ID i APP_KEY na swoje dane z Adzuny!")
     else:
         all_jobs_data = []
