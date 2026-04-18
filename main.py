@@ -10,8 +10,9 @@ load_dotenv()  # Ładuje zmienne środowiskowe z pliku .env
 # --- KONFIGURACJA ---
 APP_ID = os.getenv("APP_ID", "ADZUNA_APP_ID")
 APP_KEY = os.getenv("APP_KEY", "ADZUNA_APP_KEY")
-DB_NAME = "study_and_work_roi.db"
 
+DB_NAME = "study_and_work_roi.db"
+CSV_PATH = "education_costs.csv"
 
 # Słownik: Kod kraju API -> Pełna nazwa z pliku Kaggle
 COUNTRY_MAPPING = {
@@ -35,108 +36,90 @@ COUNTRY_MAPPING = {
 
 COUNTRIES = list(COUNTRY_MAPPING.keys())
 
+REVERSE_MAPPING = {v: k for k, v in COUNTRY_MAPPING.items()}
 
 
 MAX_PAGES_PER_COUNTRY = 5  # Zwiększ tę liczbę, aby pobrać jeszcze więcej ofert (np. 10 lub 20)
 
-def fetch_max_jobs(country):
-    """Pobiera wiele stron wyników dla danego kraju."""
-    all_country_jobs = []
-    print(f"\n-> Rozpoczynam pobieranie ofert dla: {country.upper()}")
+def fetch_jobs_by_city(country_code, city):
+    """Pobiera oferty dla konkretnego miasta w danym kraju."""
+    all_city_jobs = []
+    print(f"   -> Pobieranie ofert dla: {city} ({country_code.upper()})...")
     
-    for page in range(1, MAX_PAGES_PER_COUNTRY + 1):
-        url = f"https://api.adzuna.com/v1/api/jobs/{country}/search/{page}"
+    # Dla miast pobieramy zazwyczaj 1-2 strony, by nie przekroczyć limitów API
+    for page in range(1, 3): 
+        url = f"https://api.adzuna.com/v1/api/jobs/{country_code}/search/{page}"
         params = {
             'app_id': APP_ID,
             'app_key': APP_KEY,
-            'results_per_page': 50,  # Max na jedno zapytanie to 50
+            'results_per_page': 50,
             'what': 'data',
+            'where': city,  # KLUCZOWA ZMIANA: filtrowanie po mieście
             'content-type': 'application/json'
         }
         
         try:
             response = requests.get(url, params=params)
+            if response.status_code == 404: break
             response.raise_for_status()
             results = response.json().get('results', [])
             
-            if not results:
-                print(f"   Brak więcej wyników na stronie {page}. Kończę pobieranie dla {country}.")
-                break
-                
-            all_country_jobs.extend(results)
-            print(f"   Pobrano stronę {page} ({len(results)} ofert)")
-            time.sleep(1) # Opóźnienie, aby nie zablokowali nam API (Rate Limiting)
+            if not results: break
+            all_city_jobs.extend(results)
+            time.sleep(1) # Rate limiting
             
-        except requests.exceptions.RequestException as e:
-            print(f"   Błąd API na stronie {page}: {e}")
+        except Exception as e:
+            print(f"      Błąd: {e}")
             break
             
-    return all_country_jobs
+    return all_city_jobs
 
-def process_api_jobs(raw_jobs, country_code):
-    """Wyciąga MAKSIMUM informacji z JSONa z ofertą."""
+def process_api_jobs(raw_jobs, country_name, city_name):
+    """Pakuje dane, dodając nazwy z CSV dla łatwego JOINa."""
     processed = []
     for job in raw_jobs:
         processed.append({
             'job_id': str(job.get('id')),
-            'country_code': country_code.upper(),
+            'country_name': country_name, # Nazwa identyczna jak w CSV
+            'city_name_csv': city_name,   # Nazwa identyczna jak w CSV
             'title': job.get('title'),
-            'company_name': job.get('company', {}).get('display_name'),
-            'location_name': job.get('location', {}).get('display_name'),
-            'latitude': job.get('latitude'),
-            'longitude': job.get('longitude'),
+            'company': job.get('company', {}).get('display_name'),
             'salary_min': job.get('salary_min'),
             'salary_max': job.get('salary_max'),
-            'contract_type': job.get('contract_type', 'unknown'),
-            'contract_time': job.get('contract_time', 'unknown'),
-            'category': job.get('category', {}).get('label'),
-            'description': job.get('description'),
-            'url': job.get('redirect_url'),
-            'created_at': job.get('created')
+            'url': job.get('redirect_url')
         })
     return processed
 
-def create_database(df_jobs, csv_path):
-    """Tworzy bazę i dwie tabele faktów."""
-    conn = sqlite3.connect(DB_NAME)
-    
-    # 1. TABELA FAKTÓW 1: Oferty Pracy (API)
-    df_jobs.to_sql('fact_job_postings', conn, if_exists='replace', index=False)
-    print(f"[OK] Zapisano {len(df_jobs)} ofert pracy do tabeli 'fact_job_postings'.")
-    
-    # 2. TABELA FAKTÓW 2: Koszty Edukacji (Kaggle CSV)
-    try:
-        # Wczytujemy plik CSV pobrany z Kaggle
-        df_education = pd.read_csv(csv_path)
-        
-        # Opcjonalnie: ujednolicenie nazw kolumn (zastąpienie spacji podkreślnikami)
-        df_education.columns = df_education.columns.str.replace(' ', '_').str.lower()
-        
-        df_education.to_sql('fact_education_cost', conn, if_exists='replace', index=False)
-        print(f"[OK] Zapisano dane z Kaggle do tabeli 'fact_education_cost'.")
-    except FileNotFoundError:
-        print(f"[BŁĄD] Nie znaleziono pliku '{csv_path}'. Pobierz go z Kaggle i wrzuć do folderu ze skryptem.")
-    
-    conn.close()
-
 if __name__ == "__main__":
-    if APP_ID == "APP_ID":
-        print("BŁĄD: Zmień APP_ID i APP_KEY na swoje dane z Adzuny!")
+    if not os.path.exists(CSV_PATH):
+        print(f"BŁĄD: Brak pliku {CSV_PATH}")
     else:
+        # 1. Wczytaj miasta z CSV
+        df_edu = pd.read_csv(CSV_PATH)
+        # Pobieramy unikalne pary Kraj-Miasto (tylko dla krajów wspieranych przez Adzunę)
+        relevant_locations = df_edu[df_edu['Country'].isin(REVERSE_MAPPING.keys())][['Country', 'City']].drop_duplicates()
+        
         all_jobs_data = []
+
+        # 2. Iteruj po miastach z pliku
+        print(f"Znaleziono {len(relevant_locations)} unikalnych lokalizacji do sprawdzenia.")
         
-        # Krok 1: Pobieranie z API
-        for c in COUNTRIES:
-            raw_data = fetch_max_jobs(c)
-            processed_data = process_api_jobs(raw_data, c)
-            all_jobs_data.extend(processed_data)
+        for _, row in relevant_locations.iterrows():
+            print(_, row['Country'], row['City'])
             
-        # Krok 2: Konwersja do DataFrame
-        df_all_jobs = pd.DataFrame(all_jobs_data)
-        
-        # Krok 3: Zapis bazy (Integracja API + Plik CSV)
-        if not df_all_jobs.empty:
-            # Zakładam, że plik z Kaggle nazywa się education_costs.csv
-            create_database(df_all_jobs, csv_path='education_costs.csv')
-        else:
-            print("Brak danych do zapisania.")
+            c_name = row['Country']
+            city = row['City']
+            c_code = REVERSE_MAPPING.get(c_name)
+            
+            if c_code:
+                raw_data = fetch_jobs_by_city(c_code, city)
+                processed = process_api_jobs(raw_data, c_name, city)
+                all_jobs_data.extend(processed)
+
+        # 3. Zapisz do bazy
+        if all_jobs_data:
+            conn = sqlite3.connect(DB_NAME)
+            pd.DataFrame(all_jobs_data).to_sql('fact_job_postings', conn, if_exists='replace', index=False)
+            df_edu.to_sql('fact_education_cost', conn, if_exists='replace', index=False)
+            conn.close()
+            print(f"\n[SUKCES] Pobrano łącznie {len(all_jobs_data)} ofert pasujących do miast z CSV.")
