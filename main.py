@@ -8,8 +8,8 @@ from dotenv import load_dotenv
 load_dotenv()  # Ładuje zmienne środowiskowe z pliku .env
 
 # --- KONFIGURACJA ---
-APP_ID = os.getenv("ADZUNA_APP_ID", "APP_ID")
-APP_KEY = os.getenv("ADZUNA_APP_KEY", "APP_KEY")
+APP_ID = os.getenv("APP_ID", "ADZUNA_APP_ID")
+APP_KEY = os.getenv("APP_KEY", "ADZUNA_APP_KEY")
 DB_NAME = "study_and_work_roi.db"
 
 
