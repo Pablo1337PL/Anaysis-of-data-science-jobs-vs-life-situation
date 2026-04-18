@@ -81,11 +81,18 @@ def process_api_jobs(raw_jobs, country_name, city_name):
         processed.append({
             'job_id': str(job.get('id')),
             'country_name': country_name, # Nazwa identyczna jak w CSV
-            'city_name_csv': city_name,   # Nazwa identyczna jak w CSV
+            'city_name': city_name,   # Nazwa identyczna jak w CSV
             'title': job.get('title'),
             'company': job.get('company', {}).get('display_name'),
             'salary_min': job.get('salary_min'),
             'salary_max': job.get('salary_max'),
+            'salary_currency': job.get('salary_currency_code', 'unknown'),  # Waluta
+            #'salary_period': job.get('salary_period'),# 'yearly'),  # Okres (yearly, monthly, etc.)
+            'latitude': job.get('latitude'),
+            'longitude': job.get('longitude'),
+            'contract_time': job.get('contract_time', 'unknown'),
+            'category': job.get('category', {}).get('label'),
+            'created_at': job.get('created'),
             'url': job.get('redirect_url')
         })
     return processed
@@ -99,14 +106,15 @@ if __name__ == "__main__":
         # Pobieramy unikalne pary Kraj-Miasto (tylko dla krajów wspieranych przez Adzunę)
         relevant_locations = df_edu[df_edu['Country'].isin(REVERSE_MAPPING.keys())][['Country', 'City']].drop_duplicates()
         
+        relevant_locations = relevant_locations.sample(frac=1).reset_index(drop=True)
+        
         all_jobs_data = []
 
         # 2. Iteruj po miastach z pliku
         print(f"Znaleziono {len(relevant_locations)} unikalnych lokalizacji do sprawdzenia.")
-        
         for _, row in relevant_locations.iterrows():
             print(_, row['Country'], row['City'])
-            
+
             c_name = row['Country']
             city = row['City']
             c_code = REVERSE_MAPPING.get(c_name)
